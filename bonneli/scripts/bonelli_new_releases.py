@@ -4,18 +4,35 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+import os
 import sys
 import unicodedata
+import warnings
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+warnings.filterwarnings(
+    "ignore",
+    message="Bad certificate in Windows certificate store",
+    category=UserWarning,
+    module="ssl",
+)
 
-DEFAULT_FEED_URL = "https://en.shop.sergiobonelli.it/rss/ultime-uscite"
+
+DEFAULT_FEED_CANDIDATES: Tuple[str, ...] = (
+    "https://en.sergiobonelli.it/rss.jsp?sezione=100010",
+    "https://en.shop.sergiobonelli.it/rss.jsp?sezione=100010",
+    "https://shop.sergiobonelli.it/rss.jsp?sezione=100010",
+    "https://www.sergiobonelli.it/rss.jsp?sezione=100010",
+)
+DEFAULT_FEED_URL = DEFAULT_FEED_CANDIDATES[0]
 DEFAULT_TIMEOUT = 15
 
 # Map display name -> tuple of match keywords (normalized to ASCII, lowercase)
@@ -40,13 +57,29 @@ def _normalize(text: str) -> str:
     return "".join(ch for ch in normalized if not unicodedata.combining(ch)).lower()
 
 
-def fetch_feed(url: str, timeout: int = DEFAULT_TIMEOUT) -> bytes:
-    request = urllib.request.Request(
-        url,
-        headers={"User-Agent": "bonelli-new-releases/1.0 (+https://github.com/)"},
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
+def fetch_feed(
+    url: str,
+    timeout: int = DEFAULT_TIMEOUT,
+    fallbacks: Sequence[str] = (),
+) -> bytes:
+    errors: List[str] = []
+    for candidate in (url, *fallbacks):
+        request = urllib.request.Request(
+            candidate,
+            headers={
+                "User-Agent": "bonelli-new-releases/1.0 (+https://github.com/)",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read()
+        except urllib.error.HTTPError as err:
+            errors.append(
+                f"{candidate} -> HTTP {err.code} {err.reason or ''}".rstrip()
+            )
+        except Exception as exc:
+            errors.append(f"{candidate} -> {exc}")
+    raise RuntimeError("All feed URLs failed:\n" + "\n".join(errors))
 
 
 def parse_feed(feed_xml: bytes) -> Iterable[ET.Element]:
@@ -91,7 +124,7 @@ def load_releases(feed_xml: bytes, series_matchers: Dict[str, Tuple[str, ...]]) 
 def format_releases_text(releases: Sequence[Release]) -> str:
     lines = []
     for release in releases:
-        date_part = release.published.strftime("%Y-%m-%d") if release.published else "Unknown date"
+        date_part = release.published.strftime("%Y/%m/%d") if release.published else "Unknown date"
         lines.append(f"{date_part} | {release.series} | {release.title} | {release.link}")
     return "\n".join(lines)
 
@@ -107,6 +140,55 @@ def releases_to_json(releases: Sequence[Release]) -> str:
         for release in releases
     ]
     return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+def write_releases_csv(path: str, releases: Sequence[Release]) -> None:
+    """Append releases to CSV with a fetched timestamp, skipping duplicates."""
+    dir_name = os.path.dirname(os.path.abspath(path))
+    if dir_name and not os.path.exists(dir_name):
+        os.makedirs(dir_name, exist_ok=True)
+
+    existing_keys = set()
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        with open(path, "r", encoding="utf-8", newline="") as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                existing_keys.add(
+                    (
+                        row.get("series", ""),
+                        row.get("title", ""),
+                        row.get("link", ""),
+                    )
+                )
+
+    # Prepare unique entries for this run
+    run_timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    fieldnames = ("fetched_at", "series", "title", "link", "published")
+    new_rows = []
+    for release in releases:
+        key = (release.series, release.title, release.link)
+        if key in existing_keys:
+            continue
+        existing_keys.add(key)
+        new_rows.append(
+            {
+                "fetched_at": run_timestamp,
+                "series": release.series,
+                "title": release.title,
+                "link": release.link,
+                "published": release.published.isoformat() if release.published else "",
+            }
+        )
+
+    if not new_rows:
+        return
+
+    file_exists = os.path.exists(path)
+    with open(path, "a", encoding="utf-8", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        if not file_exists or os.path.getsize(path) == 0:
+            writer.writeheader()
+        writer.writerows(new_rows)
 
 
 def build_series_matchers(series_overrides: Optional[Sequence[str]]) -> Dict[str, Tuple[str, ...]]:
@@ -143,6 +225,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         type=int,
         help="Limit the number of releases shown.",
     )
+    parser.add_argument(
+        "--csv",
+        help="Append results to the given CSV file for historical tracking.",
+    )
     return parser.parse_args(argv)
 
 
@@ -151,7 +237,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     series_matchers = build_series_matchers(args.series)
 
     try:
-        feed_xml = fetch_feed(args.feed_url)
+        fallbacks: Sequence[str] = (
+            DEFAULT_FEED_CANDIDATES[1:] if args.feed_url == DEFAULT_FEED_URL else ()
+        )
+        feed_xml = fetch_feed(args.feed_url, fallbacks=fallbacks)
     except Exception as exc:  # pragma: no cover - network failures aren't predictable
         print(f"Failed to download feed: {exc}", file=sys.stderr)
         return 1
@@ -159,6 +248,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     releases = load_releases(feed_xml, series_matchers)
     if args.limit is not None:
         releases = releases[: max(args.limit, 0)]
+
+    if args.csv:
+        write_releases_csv(args.csv, releases)
 
     if args.json:
         print(releases_to_json(releases))

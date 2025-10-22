@@ -10,9 +10,7 @@ for a few favourite series.
 
 ## Usage
 
-The `scripts/bonelli_new_releases.py` script fetches the "New Releases" RSS
-feed from the Sergio Bonelli web store and filters it for Dylan Dog, Martin
-Mystere, and Zagor issues by default.
+The `scripts/bonelli_new_releases.py` script fetches the shop RSS feed (`rss.jsp?sezione=100010`) from Sergio Bonelli Editore and filters it for Dylan Dog, Martin Mystere, and Zagor issues by default.
 
 ```shell
 python scripts/bonelli_new_releases.py
@@ -33,6 +31,14 @@ Pass `--json` to receive a JSON array instead of plain text:
 python scripts/bonelli_new_releases.py --json
 ```
 
+### CSV history
+
+Provide a path via `--csv` to append each run's results (including the fetch timestamp) to a CSV file, letting you build your own archive over time:
+
+```shell
+python scripts/bonelli_new_releases.py --csv data/bonelli_releases.csv
+```
+
 ### Custom series
 
 You can match different series names by providing them explicitly:
@@ -43,8 +49,9 @@ python scripts/bonelli_new_releases.py --series "Nathan Never" "Dragonero"
 
 ### Feed overrides
 
-If you need to use a different RSS endpoint (for example, when the English
-store is unavailable), pass the URL directly:
+When run without arguments it first targets the English RSS endpoint and
+automatically falls back to alternative shop mirrors if that URL errors out.
+If you need to use a different RSS endpoint, pass the URL directly:
 
 ```shell
 python scripts/bonelli_new_releases.py --feed-url https://shop.sergiobonelli.it/rss/ultime-uscite
