@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+    <meta charset="UTF-8">
+    <title>Strip Scraper Kontrolna Tabla</title>
+    <style>
+        :root {
+            color-scheme: light dark;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+        body {
+            margin: 0;
+            padding: 2rem;
+            background: #000000;
+        }
+        h1, h2 {
+            margin-top: 0;
+        }
+        section {
+            background: #464646;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+        select, button {
+            font-size: 1rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            border: 1px solid #bbb;
+        }
+        button {
+            cursor: pointer;
+            background: #2563eb;
+            color: white;
+            border: none;
+        }
+        button:disabled {
+            opacity: 0.6;
+            cursor: progress;
+        }
+        .actions {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        pre {
+            background: #111827;
+            color: #f3f4f6;
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            max-height: 320px;
+        }
+        .output {
+            margin-top: 1rem;
+        }
+        .pill {
+            background: #e0e7ff;
+            color: #1e3a8a;
+            border-radius: 999px;
+            padding: 0.2rem 0.75rem;
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+    <h1>Strip Scraper – Web Kontrola</h1>
+    <p>Pokreni scrape, pregledaj stripove iz baze i preuzmi Excel direktno iz iste stranice.</p>
+
+    <section>
+        <h2>1. Pokreni Scrape</h2>
+        <div class="actions">
+            <label for="scrape-edition">Edicija</label>
+            <select id="scrape-edition">
+                {% for slug, name in edition_options %}
+                <option value="{{ slug }}">{{ name }}</option>
+                {% endfor %}
+            </select>
+            <button id="scrape-btn">Pokreni</button>
+            <span class="pill" id="scrape-status">Spremno</span>
+        </div>
+        <div class="output">
+            <pre id="scrape-output">{}</pre>
+        </div>
+    </section>
+
+    <section>
+        <h2>2. Pregled Stripova iz Baze</h2>
+        <div class="actions">
+            <label for="comics-edition">Filtriraj po ediciji</label>
+            <select id="comics-edition">
+                <option value="">Sve edicije</option>
+                {% for slug, name in edition_options %}
+                <option value="{{ slug }}">{{ name }}</option>
+                {% endfor %}
+            </select>
+            <button id="comics-btn">Učitaj listu</button>
+            <span class="pill" id="comics-status">Spremno</span>
+        </div>
+        <div class="output">
+            <pre id="comics-output">[]</pre>
+        </div>
+    </section>
+
+    <section>
+        <h2>3. Export u Excel</h2>
+        <div class="actions">
+            <label for="export-edition">Edicija</label>
+            <select id="export-edition">
+                <option value="">Sve edicije</option>
+                {% for slug, name in edition_options %}
+                <option value="{{ slug }}">{{ name }}</option>
+                {% endfor %}
+            </select>
+            <button id="export-btn">Preuzmi Excel</button>
+            <span class="pill" id="export-status">Spremno</span>
+        </div>
+    </section>
+
+    <script>
+        const scrapeBtn = document.getElementById("scrape-btn");
+        const scrapeEdition = document.getElementById("scrape-edition");
+        const scrapeOutput = document.getElementById("scrape-output");
+        const scrapeStatus = document.getElementById("scrape-status");
+
+        const comicsBtn = document.getElementById("comics-btn");
+        const comicsEdition = document.getElementById("comics-edition");
+        const comicsOutput = document.getElementById("comics-output");
+        const comicsStatus = document.getElementById("comics-status");
+
+        const exportBtn = document.getElementById("export-btn");
+        const exportEdition = document.getElementById("export-edition");
+        const exportStatus = document.getElementById("export-status");
+
+        function setBusy(btn, statusEl, busyText = "U toku...") {
+            btn.disabled = true;
+            statusEl.textContent = busyText;
+        }
+
+        function setReady(btn, statusEl, text = "Spremno") {
+            btn.disabled = false;
+            statusEl.textContent = text;
+        }
+
+        function formatJSON(data) {
+            try {
+                return JSON.stringify(data, null, 2);
+            } catch (err) {
+                return String(data);
+            }
+        }
+
+        scrapeBtn.addEventListener("click", async () => {
+            setBusy(scrapeBtn, scrapeStatus);
+            try {
+                const editionSlug = scrapeEdition.value;
+                const response = await fetch("/api/scrape", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({edition_slug: editionSlug})
+                });
+                const payload = await response.json();
+                scrapeOutput.textContent = formatJSON(payload);
+                setReady(scrapeBtn, scrapeStatus, response.ok ? "OK" : "Greška");
+            } catch (error) {
+                scrapeOutput.textContent = error.message;
+                setReady(scrapeBtn, scrapeStatus, "Greška");
+            }
+        });
+
+        comicsBtn.addEventListener("click", async () => {
+            setBusy(comicsBtn, comicsStatus);
+            try {
+                const editionSlug = comicsEdition.value;
+                const query = editionSlug ? `?edicija=${encodeURIComponent(editionSlug)}` : "";
+                const response = await fetch(`/api/comics${query}`);
+                const payload = await response.json();
+                comicsOutput.textContent = formatJSON(payload);
+                setReady(comicsBtn, comicsStatus, response.ok ? `Ukupno: ${payload.length}` : "Greška");
+            } catch (error) {
+                comicsOutput.textContent = error.message;
+                setReady(comicsBtn, comicsStatus, "Greška");
+            }
+        });
+
+        exportBtn.addEventListener("click", () => {
+            setBusy(exportBtn, exportStatus, "Pripremam...");
+            const editionSlug = exportEdition.value;
+            const query = editionSlug ? `?edicija=${encodeURIComponent(editionSlug)}` : "";
+            const url = `/api/export.xlsx${query}`;
+            const link = document.createElement("a");
+            link.href = url;
+            link.target = "_blank";
+            link.rel = "noopener";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            setTimeout(() => setReady(exportBtn, exportStatus, "Preuzeto?"), 1500);
+        });
+    </script>
+</body>
+</html>
