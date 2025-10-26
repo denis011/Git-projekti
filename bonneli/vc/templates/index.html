@@ -83,6 +83,8 @@
                 <option value="{{ slug }}">{{ name }}</option>
                 {% endfor %}
             </select>
+            <label for="scrape-per-page">Unosa po strani</label>
+            <input id="scrape-per-page" type="number" min="1" aria-label="Broj stripova po stranici" value="48">
             <button id="scrape-btn">Pokreni</button>
             <span class="pill" id="scrape-status">Spremno</span>
         </div>
@@ -124,9 +126,29 @@
         </div>
     </section>
 
+    <section>
+        <h2>4. Brisanje stripa</h2>
+        <div class="actions">
+            <label for="delete-edition">Edicija</label>
+            <select id="delete-edition">
+                {% for slug, name in edition_options %}
+                <option value="{{ slug }}">{{ name }}</option>
+                {% endfor %}
+            </select>
+            <label for="delete-broj">Broj izdanja (ili * - sve iz edicije)</label>
+            <input id="delete-broj" type="text" inputmode="numeric" placeholder="npr. 75 ili *">
+            <button id="delete-btn">Obriši</button>
+            <span class="pill" id="delete-status">Spremno</span>
+        </div>
+        <div class="output">
+            <pre id="delete-output">{"deleted": 0}</pre>
+        </div>
+    </section>
+
     <script>
         const scrapeBtn = document.getElementById("scrape-btn");
         const scrapeEdition = document.getElementById("scrape-edition");
+        const scrapePerPage = document.getElementById("scrape-per-page");
         const scrapeOutput = document.getElementById("scrape-output");
         const scrapeStatus = document.getElementById("scrape-status");
 
@@ -138,6 +160,12 @@
         const exportBtn = document.getElementById("export-btn");
         const exportEdition = document.getElementById("export-edition");
         const exportStatus = document.getElementById("export-status");
+
+        const deleteBtn = document.getElementById("delete-btn");
+        const deleteEdition = document.getElementById("delete-edition");
+        const deleteBroj = document.getElementById("delete-broj");
+        const deleteStatus = document.getElementById("delete-status");
+        const deleteOutput = document.getElementById("delete-output");
 
         function setBusy(btn, statusEl, busyText = "U toku...") {
             btn.disabled = true;
@@ -161,14 +189,27 @@
             setBusy(scrapeBtn, scrapeStatus);
             try {
                 const editionSlug = scrapeEdition.value;
+                const perPageValue = (scrapePerPage.value || "").trim();
+                const perPageParsed = perPageValue ? parseInt(perPageValue, 10) : undefined;
+                if (perPageValue && (Number.isNaN(perPageParsed) || perPageParsed <= 0)) {
+                    throw new Error("per_page mora biti veći od nule.");
+                }
+                const body = { edition_slug: editionSlug };
+                if (perPageParsed) {
+                    body.per_page = perPageParsed;
+                }
                 const response = await fetch("/api/scrape", {
                     method: "POST",
                     headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({edition_slug: editionSlug})
+                    body: JSON.stringify(body)
                 });
-                const payload = await response.json();
-                scrapeOutput.textContent = formatJSON(payload);
-                setReady(scrapeBtn, scrapeStatus, response.ok ? "OK" : "Greška");
+                const result = await response.json();
+                scrapeOutput.textContent = formatJSON(result);
+                const perPageLabel = result.per_page || body.per_page || perPageParsed;
+                const statusText = response.ok
+                    ? `OK${perPageLabel ? ` (per_page=${perPageLabel})` : ""}`
+                    : "Greška";
+                setReady(scrapeBtn, scrapeStatus, statusText);
             } catch (error) {
                 scrapeOutput.textContent = error.message;
                 setReady(scrapeBtn, scrapeStatus, "Greška");
@@ -203,6 +244,42 @@
             link.click();
             document.body.removeChild(link);
             setTimeout(() => setReady(exportBtn, exportStatus, "Preuzeto?"), 1500);
+        });
+
+        deleteBtn.addEventListener("click", async () => {
+            setBusy(deleteBtn, deleteStatus);
+            try {
+                const editionSlug = deleteEdition.value;
+                const brojRaw = (deleteBroj.value || "").trim();
+                if (!brojRaw) {
+                    throw new Error("Unesi broj izdanja koji želiš da obrišeš.");
+                }
+                let brojValue = brojRaw;
+                if (brojRaw !== "*") {
+                    const broj = parseInt(brojRaw, 10);
+                    if (Number.isNaN(broj) || broj <= 0) {
+                        throw new Error("Broj izdanja mora biti pozitivan ceo broj ili *.");
+                    }
+                    brojValue = broj.toString();
+                }
+                const query = new URLSearchParams({
+                    edicija: editionSlug,
+                    broj: brojValue
+                });
+                const response = await fetch(`/api/comics?${query.toString()}`, {
+                    method: "DELETE"
+                });
+                const payload = await response.json();
+                deleteOutput.textContent = formatJSON(payload);
+                setReady(
+                    deleteBtn,
+                    deleteStatus,
+                    response.ok ? `Obrisano: ${payload.deleted}` : "Greška"
+                );
+            } catch (error) {
+                deleteOutput.textContent = error.message;
+                setReady(deleteBtn, deleteStatus, "Greška");
+            }
         });
     </script>
 </body>

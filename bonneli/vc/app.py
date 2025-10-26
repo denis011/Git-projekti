@@ -4,13 +4,14 @@ import io
 import requests
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, parse_qsl, urlencode
 from fastapi import FastAPI, Response, HTTPException, Query, Body
 from fastapi.responses import StreamingResponse, JSONResponse
 
 from bs4 import BeautifulSoup
 from sqlalchemy import create_engine, Column, Integer, String, Date, Text, select, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import delete
 import pandas as pd
 from slugify import slugify
 
@@ -36,6 +37,38 @@ EDITIONS = {
     "zagor-ciko": {
         "list_url": "https://veselicetvrtak.com/izdanja/?filter_edicija=ciko&per_page=12",
         "name": "Zagor - Ciko",
+    },
+    "marti-redovna-serija": {
+        "list_url": "https://veselicetvrtak.com/izdanja/?filter_edicija=marti-misterija-redovna-serija&per_page=12",
+        "name": "Marti Misterija - redovna serija",
+    },
+    "marti-biblioteka": {
+        "list_url": "https://veselicetvrtak.com/izdanja/?filter_edicija=biblioteka-marti-misterija&per_page=12",
+        "name": "Marti Misterija - biblioteka",
+    },
+    "dilan-dog-redovna-serija": {
+        "list_url": "https://veselicetvrtak.com/izdanja/?filter_edicija=dilan-dog-redovna-serija&per_page=12",
+        "name": "Dilan Dog - redovna serija",
+    },
+    "dilan-dog-super-book": {
+        "list_url": "https://veselicetvrtak.com/izdanja/?filter_edicija=dilan-dog-super-book&per_page=12",
+        "name": "Dilan Dog - Super Book",
+    },
+    "dilan-dog-planeta-mrtvih": {
+        "list_url": "https://veselicetvrtak.com/izdanja/?filter_edicija=dilan-dog-planeta-mrtvih&per_page=12",
+        "name": "Dilan Dog - Planeta mrtvih",
+    },
+    "dilan-dog-biblioteka": {
+        "list_url": "https://veselicetvrtak.com/izdanja/?filter_edicija=biblioteka-dilan-dog&per_page=12",
+        "name": "Dilan Dog - Biblioteka",
+    },
+    "dilan-dog-predstavlja": {
+        "list_url": "https://veselicetvrtak.com/katalog/dilan-dog/dilan-dog-predstavlja-price-iz-nekog-drugog-sutra?per_page=12",
+        "name": "Dilan Dog predstavlja - Price iz nekog drugog sutra",
+    },
+    "biblioteka-obojeni-program": {
+        "list_url": "https://veselicetvrtak.com/izdanja/?filter_edicija=biblioteka-obojeni-program&per_page=12",
+        "name": "Biblioteka - Obojeni program",
     },
 }
 DEFAULT_EDITION_SLUG = "zagor-redovna-serija"
@@ -112,6 +145,16 @@ def resolve_optional_edition(value: Optional[str]) -> Optional[Tuple[str, dict]]
 
 def casefold_equals(a: Optional[str], b: Optional[str]) -> bool:
     return (a or "").casefold() == (b or "").casefold()
+
+
+def with_per_page(url: str, per_page: Optional[int]) -> str:
+    if not per_page:
+        return url
+    parsed = urlparse(url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query["per_page"] = str(per_page)
+    new_query = urlencode(query, doseq=True)
+    return parsed._replace(query=new_query).geturl()
 
 def extract_labeled_value(full_text: str, label_regex: str, next_labels: list[str]) -> Optional[str]:
    
@@ -370,15 +413,33 @@ def upsert_comic(db, data: dict):
 @app.post("/scrape")
 def run_scrape(payload: Optional[dict] = Body(default=None)):
     edition_param = None
+    per_page_raw: Optional[str] = None
     if payload:
         edition_param = (
             payload.get("edition_slug")
             or payload.get("slug")
             or payload.get("edicija")
         )
+        per_page_raw = payload.get("per_page") or payload.get("perPage")
     edition_slug, edition_cfg = resolve_edition_with_default(edition_param)
+    per_page_value: Optional[int] = None
+    if per_page_raw not in (None, ""):
+        try:
+            per_page_value = int(per_page_raw)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Parametar per_page mora biti ceo broj.")
+        if per_page_value <= 0:
+            raise HTTPException(400, "Parametar per_page mora biti veći od nule.")
+
     session = get_session()
-    pairs = scrape_list_urls(session, edition_cfg["list_url"])  # [(title, url)]
+    list_url = with_per_page(edition_cfg["list_url"], per_page_value)
+    pairs = scrape_list_urls(session, list_url)  # [(title, url)]
+    per_page_effective: Optional[int] = per_page_value
+    if per_page_effective is None:
+        query_params = dict(parse_qsl(urlparse(list_url).query, keep_blank_values=True))
+        candidate = query_params.get("per_page")
+        if candidate and candidate.isdigit():
+            per_page_effective = int(candidate)
     if not pairs:
         raise HTTPException(502, "Nisam prona\u0161ao nijedan strip na list stranici (promenjen HTML?).")
 
@@ -412,6 +473,8 @@ def run_scrape(payload: Optional[dict] = Body(default=None)):
     return {
         "edition_slug": edition_slug,
         "edition_name": edition_cfg["name"],
+        "per_page": per_page_effective,
+        "list_url": list_url,
         "found": len(pairs),
         "imported_or_updated": imported,
         "sample": details[:5],
@@ -496,3 +559,46 @@ def export_excel(edition_param: Optional[str] = Query(None, alias="edicija")):
         filename = f"zagor_{slugify(datetime.now().isoformat(timespec='seconds'))}.xlsx"
         return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                  headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@app.delete("/comics")
+def delete_comic(
+    edition_param: str = Query(..., alias="edicija"),
+    broj: str = Query(..., description="Broj izdanja veselog Četvrtka (ili * za sva izdanja)"),
+):
+    if not broj:
+        raise HTTPException(400, "Parametar broj je obavezan.")
+
+    edition_filter = resolve_optional_edition(edition_param)
+    if not edition_filter:
+        raise HTTPException(400, "Nepoznata edicija.")
+    edition_name = edition_filter[1]["name"]
+
+    delete_all = broj.strip() == "*"
+    if delete_all:
+        broj_normalized = None
+    else:
+        broj_normalized = normalize_issue_number(broj)
+        if not broj_normalized:
+            raise HTTPException(400, "Broj mora biti pozitivan ceo broj.")
+
+    with SessionLocal() as db:
+        stmt = (
+            delete(Comic)
+            .where(Comic.edicija == edition_name)
+        )
+        if not delete_all:
+            stmt = stmt.where(Comic.broj == broj_normalized)
+
+        result = db.execute(stmt)
+        deleted_count = result.rowcount or 0
+        db.commit()
+
+    if deleted_count == 0:
+        raise HTTPException(404, "Nije pronađen strip za zadate parametre.")
+
+    return {
+        "deleted": deleted_count,
+        "edicija": edition_name,
+        "broj": "*" if delete_all else broj_normalized,
+    }
