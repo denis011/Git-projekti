@@ -1,0 +1,12 @@
+{
+  "name": "seatapp-web",
+  "private": true,
+  "scripts": {
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "4.19.2",
+    "node-fetch": "3.3.2"
+  },
+  "type": "module"
+}

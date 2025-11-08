@@ -70,6 +70,10 @@ EDITIONS = {
         "list_url": "https://veselicetvrtak.com/izdanja/?filter_edicija=biblioteka-obojeni-program&per_page=12",
         "name": "Biblioteka - Obojeni program",
     },
+    "zlatna-serija": {
+        "list_url": "https://veselicetvrtak.com/izdanja/?filter_edicija=zlatna-serija&per_page=12",
+        "name": "Nova Zlatna Serija",
+    },
 }
 DEFAULT_EDITION_SLUG = "zagor-redovna-serija"
 DEFAULT_EDICIJA = EDITIONS[DEFAULT_EDITION_SLUG]["name"]
@@ -525,7 +529,7 @@ def export_excel(edition_param: Optional[str] = Query(None, alias="edicija")):
             if edition_name and not casefold_equals(r.edicija, edition_name):
                 continue
             data.append({
-                "naslov izdavacke kuce": r.izdavac,
+                "izdavacka kuca": r.izdavac,
                 "edicija": r.edicija,
                 "broj": r.broj,
                 "naslov": r.naslov,
@@ -541,7 +545,7 @@ def export_excel(edition_param: Optional[str] = Query(None, alias="edicija")):
         df = pd.DataFrame(
             data,
             columns=[
-                "naslov izdavacke kuce",
+                "izdavacka kuca",
                 "edicija",
                 "broj",
                 "naslov",
@@ -556,7 +560,7 @@ def export_excel(edition_param: Optional[str] = Query(None, alias="edicija")):
         buf = io.BytesIO()
         df.to_excel(buf, index=False)
         buf.seek(0)
-        filename = f"zagor_{slugify(datetime.now().isoformat(timespec='seconds'))}.xlsx"
+        filename = f"veseli_cetvrtak_{slugify(datetime.now().isoformat(timespec='seconds'))}.xlsx"
         return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                  headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
