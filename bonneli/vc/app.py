@@ -1,12 +1,14 @@
 import re
+import os
 import time
 import io
 import requests
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse, parse_qsl, urlencode
-from fastapi import FastAPI, Response, HTTPException, Query, Body
+from fastapi import FastAPI, Response, HTTPException, Query, Body, Request
 from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
 
 from bs4 import BeautifulSoup
 from sqlalchemy import create_engine, Column, Integer, String, Date, Text, select, UniqueConstraint
@@ -81,7 +83,11 @@ DEFAULT_IZDAVAC = "Veseli Četvrtak"  # fallback ako ne nađemo na stranici
 
 # --- DB setup ---
 Base = declarative_base()
-engine = create_engine("sqlite:///comics.db", future=True)
+
+if not os.path.exists("data"):
+    os.makedirs("data")
+
+engine = create_engine("sqlite:///data/comics.db", future=True)
 SessionLocal = sessionmaker(bind=engine, future=True)
 
 class Comic(Base):
@@ -102,6 +108,7 @@ class Comic(Base):
 Base.metadata.create_all(engine)
 
 app = FastAPI(title="Strip Scraper", version="0.1")
+templates = Jinja2Templates(directory="templates")
 
 # --- Helpers ---
 
@@ -414,7 +421,12 @@ def upsert_comic(db, data: dict):
 
 # --- API ---
 
-@app.post("/scrape")
+@app.get("/")
+def index(request: Request):
+    edition_options = [(slug, cfg["name"]) for slug, cfg in EDITIONS.items()]
+    return templates.TemplateResponse("index.html", {"request": request, "edition_options": edition_options})
+
+@app.post("/api/scrape")
 def run_scrape(payload: Optional[dict] = Body(default=None)):
     edition_param = None
     per_page_raw: Optional[str] = None
@@ -485,7 +497,7 @@ def run_scrape(payload: Optional[dict] = Body(default=None)):
     }
 
 
-@app.get("/comics")
+@app.get("/api/comics")
 def list_comics(edition_param: Optional[str] = Query(None, alias="edicija")):
     edition_filter = resolve_optional_edition(edition_param)
     edition_name = edition_filter[1]["name"] if edition_filter else None
@@ -512,7 +524,7 @@ def list_comics(edition_param: Optional[str] = Query(None, alias="edicija")):
         return comics
 
 
-@app.get("/export.xlsx")
+@app.get("/api/export.xlsx")
 def export_excel(edition_param: Optional[str] = Query(None, alias="edicija")):
     edition_filter = resolve_optional_edition(edition_param)
     edition_name = edition_filter[1]["name"] if edition_filter else None
@@ -565,7 +577,7 @@ def export_excel(edition_param: Optional[str] = Query(None, alias="edicija")):
                                  headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
-@app.delete("/comics")
+@app.delete("/api/comics")
 def delete_comic(
     edition_param: str = Query(..., alias="edicija"),
     broj: str = Query(..., description="Broj izdanja veselog Četvrtka (ili * za sva izdanja)"),
