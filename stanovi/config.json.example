@@ -1,0 +1,17 @@
+{
+    "email": {
+        "sender": "your_email@gmail.com",
+        "password": "your_app_password",
+        "recipients": ["recipient1@gmail.com"],
+        "smtp_server": "smtp.gmail.com",
+        "smtp_port": 587
+    },
+    "urls": [
+        "https://www.nekretnine.rs/url-1/",
+        "https://www.nekretnine.rs/url-2/"
+    ],
+    "export": {
+        "filename": "stanovi_karaburma.xlsx"
+    },
+    "interval_hours": 6
+}

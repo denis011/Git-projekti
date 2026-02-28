@@ -1,0 +1,15 @@
+# Konfiguracija sa lozinkama
+config.json
+
+# Lokalna baza podataka i logovi
+apartments.json
+log.txt
+stanovi_karaburma.xlsx
+
+# Python kes
+__pycache__/
+*.pyc
+
+# OS fajlovi
+.DS_Store
+Thumbs.db
